@@ -205,6 +205,80 @@
     margin-top: 4px;
   }
 
+  /* --- Custom Range Settings --- */
+  .settings-toggle {
+    margin-top: 16px;
+    font-size: 10px;
+    color: var(--text-muted);
+    cursor: pointer;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    background: none;
+    border: none;
+    font-family: inherit;
+    transition: color 0.2s;
+  }
+  .settings-toggle:hover { color: var(--text-dim); }
+
+  .settings-panel {
+    margin-top: 12px;
+    padding: 14px;
+    background: rgba(255,255,255,0.03);
+    border-radius: 14px;
+    display: none;
+    text-align: left;
+  }
+  .settings-panel.open { display: block; }
+
+  .settings-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+  }
+  .settings-row:last-child { margin-bottom: 0; }
+  .settings-row label {
+    font-size: 10px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    min-width: 60px;
+  }
+  .settings-row input {
+    background: var(--bg);
+    border: 1px solid var(--bar-track);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 12px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    outline: none;
+    color-scheme: dark;
+  }
+  .settings-row input:focus { border-color: var(--accent); }
+  .settings-row input[type="date"] { flex: 1; min-width: 120px; }
+  .settings-row input[type="text"] { flex: 1; min-width: 80px; }
+  .settings-row input[type="number"] { width: 70px; }
+  .settings-note {
+    font-size: 9px;
+    color: var(--text-muted);
+    margin-top: 6px;
+    text-align: center;
+  }
+
+  .goal-display {
+    margin-top: 10px;
+    font-size: 13px;
+    color: var(--text-dim);
+    letter-spacing: 0.5px;
+  }
+  .goal-display .goal-value {
+    color: var(--accent);
+    font-weight: 600;
+    font-family: var(--mono, monospace);
+  }
+
   /* --- Footer --- */
   .footer {
     margin-top: 20px;
@@ -288,6 +362,35 @@
     </div>
   </div>
 
+  <!-- Custom Goal Display -->
+  <div class="goal-display" id="goalDisplay" style="display:none">
+    <span id="goalText">Progress toward goal</span>: <span class="goal-value" id="goalValue">0%</span>
+  </div>
+
+  <!-- Settings -->
+  <button class="settings-toggle" id="settingsToggle">⚙ Custom Range &amp; Goal</button>
+  <div class="settings-panel" id="settingsPanel">
+    <div class="settings-row">
+      <label>Start</label>
+      <input type="date" id="startDateInput">
+    </div>
+    <div class="settings-row">
+      <label>End</label>
+      <input type="date" id="endDateInput">
+    </div>
+    <div class="settings-row">
+      <label>Goal Name</label>
+      <input type="text" id="goalNameInput" placeholder="e.g. Read 50 books" maxlength="40">
+    </div>
+    <div class="settings-row">
+      <label>Target</label>
+      <input type="number" id="goalTargetInput" min="1" value="100" placeholder="100">
+      <label style="min-width:auto">Current</label>
+      <input type="number" id="goalCurrentInput" min="0" value="0" placeholder="0">
+    </div>
+    <div class="settings-note">Leave start/end empty for the full calendar year.</div>
+  </div>
+
   <div class="footer">
     <a href="https://github.com/soumendrak/yearprogress" target="_blank" rel="noopener">yearprogress</a>
     &middot; zero dependencies &middot; live
@@ -307,6 +410,23 @@
   const dayEl   = document.getElementById('dayDisplay');
   const leftEl  = document.getElementById('daysLeftDisplay');
   const freeEl  = document.getElementById('freeDaysDisplay');
+  const goalDisplay = document.getElementById('goalDisplay');
+  const goalText = document.getElementById('goalText');
+  const goalValue = document.getElementById('goalValue');
+  const settingsToggle = document.getElementById('settingsToggle');
+  const settingsPanel = document.getElementById('settingsPanel');
+  const startDateInput = document.getElementById('startDateInput');
+  const endDateInput = document.getElementById('endDateInput');
+  const goalNameInput = document.getElementById('goalNameInput');
+  const goalTargetInput = document.getElementById('goalTargetInput');
+  const goalCurrentInput = document.getElementById('goalCurrentInput');
+
+  // Saved settings
+  let customStart = null;
+  let customEnd = null;
+  let goalName = '';
+  let goalTarget = 100;
+  let goalCurrent = 0;
 
   function isLeap(y) {
     return (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
@@ -325,18 +445,15 @@
   }
 
   function dayOfYear(year, month, day) {
-    // month is 0-indexed
     const start = new Date(year, 0, 0);
     const diff  = new Date(year, month, day) - start;
     return Math.floor(diff / 86400000);
   }
 
   function countFreeDaysRemaining(year, month, day) {
-    // A "free day" = Saturday (6) or Sunday (0)
     let count = 0;
-    const start = new Date(year, month, day + 1); // tomorrow
+    const start = new Date(year, month, day + 1);
     const end   = new Date(year, 11, 31);
-    // end inclusive
     let cur = new Date(start);
     while (cur <= end) {
       const dow = cur.getDay();
@@ -346,22 +463,85 @@
     return count;
   }
 
+  function dateToStr(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return y + '-' + m + '-' + day;
+  }
+
+  function strToDate(s) {
+    if (!s) return null;
+    const d = new Date(s + 'T00:00:00');
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  function loadSettings() {
+    try {
+      const raw = localStorage.getItem('yp-settings');
+      if (raw) {
+        const s = JSON.parse(raw);
+        customStart = s.start || null;
+        customEnd = s.end || null;
+        goalName = s.goalName || '';
+        goalTarget = s.goalTarget || 100;
+        goalCurrent = s.goalCurrent || 0;
+      }
+    } catch(e) {}
+    if (customStart) startDateInput.value = customStart;
+    if (customEnd) endDateInput.value = customEnd;
+    goalNameInput.value = goalName;
+    goalTargetInput.value = goalTarget;
+    goalCurrentInput.value = goalCurrent;
+  }
+
+  function saveSettings() {
+    try {
+      localStorage.setItem('yp-settings', JSON.stringify({
+        start: customStart,
+        end: customEnd,
+        goalName: goalName,
+        goalTarget: goalTarget,
+        goalCurrent: goalCurrent
+      }));
+    } catch(e) {}
+  }
+
   function update() {
-    const { year, month, day } = getToday();
-    const total = daysInYear(year);
-    const doy   = dayOfYear(year, month, day);
-    const pct   = total > 0 ? doy / total : 0;
+    const { year, month, day, date: today } = getToday();
+
+    // Determine date range
+    let rangeStart, rangeEnd;
+    if (customStart) {
+      rangeStart = strToDate(customStart);
+    }
+    if (!rangeStart) rangeStart = new Date(year, 0, 1); // Jan 1
+
+    if (customEnd) {
+      rangeEnd = strToDate(customEnd);
+    }
+    if (!rangeEnd) rangeEnd = new Date(year, 11, 31); // Dec 31
+
+    // Ensure start <= end
+    if (rangeStart > rangeEnd) {
+      const tmp = rangeStart;
+      rangeStart = rangeEnd;
+      rangeEnd = tmp;
+    }
+
+    const totalDays = Math.round((rangeEnd - rangeStart) / 86400000) + 1;
+    const elapsedDays = Math.round((today - rangeStart) / 86400000);
+    const pct = totalDays > 0 ? Math.min(1, Math.max(0, elapsedDays / totalDays)) : 0;
     const pctDisplay = Math.min(100, Math.round(pct * 100));
+
+    const total = daysInYear(year);
+    const doy = dayOfYear(year, month, day);
     const daysLeft = total - doy;
     const freeDays = countFreeDaysRemaining(year, month, day);
 
     // Year + leap badge
     yrEl.textContent = year;
-    if (isLeap(year)) {
-      leapEl.hidden = false;
-    } else {
-      leapEl.hidden = true;
-    }
+    leapEl.hidden = !isLeap(year);
 
     // Ring
     const offset = C * (1 - pct);
@@ -370,24 +550,56 @@
     // Bar
     barFill.style.width = (pct * 100) + '%';
 
-    // Percentage — safe: pctDisplay is a sanitized number (no user input), static span is controlled by us
+    // Percentage
     pctEl.innerHTML = pctDisplay + '<span class="pct-sign">%</span>';
 
-    // Day of year
+    // Stats (still show calendar year stats)
     dayEl.textContent = doy;
-
-    // Days left
     leftEl.textContent = daysLeft;
-
-    // Free days
     freeEl.textContent = freeDays;
+
+    // Custom goal
+    if (goalName && goalTarget > 0) {
+      const goalPct = Math.min(100, Math.max(0, (goalCurrent / goalTarget) * 100));
+      goalDisplay.style.display = 'block';
+      goalText.textContent = goalName;
+      goalValue.textContent = formatNumber(goalCurrent) + ' / ' + formatNumber(goalTarget) + ' (' + goalPct.toFixed(1) + '%)';
+    } else {
+      goalDisplay.style.display = 'none';
+    }
 
     // Update document title
     document.title = pctDisplay + '% — Year Progress ' + year;
   }
 
+  function formatNumber(n) {
+    return Number(n).toLocaleString();
+  }
+
+  // Settings event handlers
+  settingsToggle.addEventListener('click', function() {
+    settingsPanel.classList.toggle('open');
+  });
+
+  function onSettingChange() {
+    customStart = startDateInput.value || null;
+    customEnd = endDateInput.value || null;
+    goalName = goalNameInput.value.trim();
+    goalTarget = parseInt(goalTargetInput.value) || 100;
+    goalCurrent = parseInt(goalCurrentInput.value) || 0;
+    saveSettings();
+    update();
+  }
+
+  startDateInput.addEventListener('change', onSettingChange);
+  endDateInput.addEventListener('change', onSettingChange);
+  goalNameInput.addEventListener('input', onSettingChange);
+  goalTargetInput.addEventListener('input', onSettingChange);
+  goalCurrentInput.addEventListener('input', onSettingChange);
+
+  loadSettings();
   update();
-  setInterval(update, 60000); // every 60 seconds — more than enough granularity
+  setInterval(update, 60000);
 })();
 </script>
 </body>
